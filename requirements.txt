@@ -3,3 +3,4 @@ openpyxl
 requests
 gspread
 google-auth
+sendgrid
