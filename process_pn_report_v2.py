@@ -276,28 +276,33 @@ def send_email(df, excel_path):
         </body></html>
         """
 
-        mailgun_domain  = os.environ.get("MAILGUN_DOMAIN")
-        mailgun_api_key = os.environ.get("MAILGUN_API_KEY")
+        import sendgrid
+        from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+        import base64
+
+        sg_api_key = os.environ.get("SENDGRID_API_KEY")
 
         with open(excel_path, 'rb') as f:
-            excel_data = f.read()
+            encoded = base64.b64encode(f.read()).decode()
 
-        response = requests.post(
-            f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-            auth=("api", mailgun_api_key),
-            data={
-                "from": f"Park+ PN Report <mailgun@{mailgun_domain}>",
-                "to": EMAIL_RECIPIENT,
-                "subject": f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
-                "html": html,
-            },
-            files=[("attachment", (os.path.basename(excel_path), excel_data,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))]
+        message = Mail(
+            from_email=EMAIL_SENDER,
+            to_emails=EMAIL_RECIPIENT,
+            subject=f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
+            html_content=html
         )
 
+        attachment = Attachment(
+            FileContent(encoded),
+            FileName(os.path.basename(excel_path)),
+            FileType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            Disposition("attachment")
+        )
+        message.attachment = attachment
+
+        sg = sendgrid.SendGridAPIClient(api_key=sg_api_key)
+        response = sg.send(message)
         print(f"      → Email sent! Status: {response.status_code}")
-        if response.status_code != 200:
-            print(f"      → Response: {response.text}")
     except Exception as e:
         print(f"      [ERROR] Email failed: {e}")
 
