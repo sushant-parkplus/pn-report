@@ -68,17 +68,12 @@ def download_moengage_report(date=None):
 
     response = requests.get(url, timeout=60)
 
-    if response.status_code != 200:
-        raise Exception(
-            f"MoEngage API failed. Status: {response.status_code}\n"
-            f"Response: {response.text}\n\n"
-            f"Common reasons:\n"
-            f"  - Wrong API key (use the Campaign Report key, not the Data key)\n"
-            f"  - Report not generated yet (enable it in MoEngage Settings)\n"
-            f"  - MoEngage account payment issue"
-        )
-
     print(f"      → Downloaded {len(response.content) / 1024:.1f} KB")
+    print(f"      → Status: {response.status_code}")
+    print(f"      → Response preview: {response.text[:300]}")
+
+    if response.status_code != 200:
+        raise Exception(f"MoEngage API failed: {response.text}")
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as z:
         file_list = z.namelist()
