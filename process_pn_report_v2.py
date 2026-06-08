@@ -276,28 +276,27 @@ def send_email(df, excel_path):
         </body></html>
         """
 
-        mailgun_domain  = os.environ.get("MAILGUN_DOMAIN")
-        mailgun_api_key = os.environ.get("MAILGUN_API_KEY")
+        msg = MIMEMultipart()
+        msg['Subject'] = f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%"
+        msg['From']    = EMAIL_SENDER
+        msg['To']      = EMAIL_RECIPIENT
+        msg.attach(MIMEText(html, 'html'))
 
         with open(excel_path, 'rb') as f:
-            excel_data = f.read()
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(excel_path)}"')
+            msg.attach(part)
 
-        response = requests.post(
-            f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-            auth=("api", mailgun_api_key),
-            data={
-                "from": f"Park+ PN Report <mailgun@{mailgun_domain}>",
-                "to": EMAIL_RECIPIENT,
-                "subject": f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
-                "html": html,
-            },
-            files=[("attachment", (os.path.basename(excel_path), excel_data,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))]
-        )
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
 
-        print(f"      → Email sent! Status: {response.status_code}")
-        if response.status_code != 200:
-            print(f"      → Response: {response.text}")
+        print(f"      → Email sent!")
     except Exception as e:
         print(f"      [ERROR] Email failed: {e}")
 
