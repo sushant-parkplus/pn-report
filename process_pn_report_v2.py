@@ -7,19 +7,11 @@ This script does everything automatically:
 3. Saves a clean Excel file
 4. Appends data to Google Sheet (for live dashboard)
 5. Sends you a daily email summary
-
-HOW TO SET UP (one time only):
---------------------------------
-Step 1: Fill in YOUR SETTINGS section below (lines 30–45)
-Step 2: Follow the setup guide to get Google credentials
-Step 3: Deploy to Railway — it runs every day automatically
-
-REQUIREMENTS:
-    pip install pandas openpyxl requests gspread google-auth
 """
 
 import os
 import re
+import json
 import hashlib
 import zipfile
 import io
@@ -34,7 +26,7 @@ from email import encoders
 
 
 # ═══════════════════════════════════════════════════════════
-#  YOUR SETTINGS — FILL THESE IN (only section you touch)
+#  SETTINGS — all loaded from Railway Environment Variables
 # ═══════════════════════════════════════════════════════════
 
 WORKSPACE_ID     = os.environ.get("WORKSPACE_ID")
@@ -44,16 +36,11 @@ EMAIL_SENDER     = os.environ.get("EMAIL_SENDER")
 EMAIL_PASSWORD   = os.environ.get("EMAIL_PASSWORD")
 EMAIL_RECIPIENT  = os.environ.get("EMAIL_RECIPIENT")
 GOOGLE_SHEET_ID  = os.environ.get("GOOGLE_SHEET_ID")
-GOOGLE_CREDS_FILE = "google_creds.json"
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON")
 
-# --- Settings ---
-OUTPUT_FOLDER = "./output"    # Where Excel files are saved locally
+OUTPUT_FOLDER = "./output"
 
-# ═══════════════════════════════════════════════════════════
-#  DO NOT EDIT BELOW THIS LINE
-# ═══════════════════════════════════════════════════════════
-
-MOENGAGE_API_BASE = "https://api-01.moengage.com"   # DC-01 (matches your dashboard-01 URL)
+MOENGAGE_API_BASE = "https://api-01.moengage.com"
 
 
 # ─────────────────────────────────────────────
@@ -61,36 +48,22 @@ MOENGAGE_API_BASE = "https://api-01.moengage.com"   # DC-01 (matches your dashbo
 # ─────────────────────────────────────────────
 
 def generate_signature(workspace_id, filename, secret_key):
-    """
-    MoEngage requires a signature to verify every API request.
-    Formula: SHA256(workspace_id + "|" + filename + "|" + secret_key)
-    """
     signature_string = f"{workspace_id}|{filename}|{secret_key}"
     return hashlib.sha256(signature_string.encode('utf-8')).hexdigest()
 
 
 def download_moengage_report(date=None):
-    """
-    Downloads the daily campaign report from MoEngage for a given date.
-    Default: yesterday's report (since today's isn't ready yet).
-
-    Returns a pandas DataFrame of the raw report.
-    """
     if date is None:
-        # Always pull yesterday's data (today's report isn't generated yet)
         report_date = datetime.now() - timedelta(days=1)
     else:
         report_date = date
 
     filename = report_date.strftime("%Y%m%d") + ".zip"
-    date_str  = report_date.strftime("%Y-%m-%d")
+    date_str = report_date.strftime("%Y-%m-%d")
 
     print(f"[1/5] Downloading MoEngage report for {date_str}...")
 
-    # Generate the security signature
     signature = generate_signature(WORKSPACE_ID, filename, CAMPAIGN_API_KEY)
-
-    # Build the API URL
     url = f"{MOENGAGE_API_BASE}/dailyCampaignReportDump/{WORKSPACE_ID}/{filename}?Signature={signature}"
 
     response = requests.get(url, timeout=60)
@@ -101,26 +74,23 @@ def download_moengage_report(date=None):
             f"Response: {response.text}\n\n"
             f"Common reasons:\n"
             f"  - Wrong API key (use the Campaign Report key, not the Data key)\n"
-            f"  - Report not generated yet (enable it in MoEngage → Settings → Reports)\n"
-            f"  - MoEngage account payment issue (check the red banner on your dashboard)"
+            f"  - Report not generated yet (enable it in MoEngage Settings)\n"
+            f"  - MoEngage account payment issue"
         )
 
-    # The API returns a ZIP file — extract the Excel/CSV inside
     print(f"      → Downloaded {len(response.content) / 1024:.1f} KB")
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as z:
         file_list = z.namelist()
         print(f"      → Files in ZIP: {file_list}")
 
-        # Find the push notification report file
-        # MoEngage names it like: PUSH_YYYYMMDD.xlsx or similar
         target_file = None
         for f in file_list:
-            if 'PUSH' in f.upper() or 'push' in f.lower():
+            if 'PUSH' in f.upper():
                 target_file = f
                 break
         if not target_file:
-            target_file = file_list[0]   # Fall back to first file
+            target_file = file_list[0]
 
         print(f"      → Reading: {target_file}")
         with z.open(target_file) as excel_file:
@@ -138,11 +108,6 @@ def download_moengage_report(date=None):
 # ─────────────────────────────────────────────
 
 def parse_campaign_name(raw_name):
-    """
-    Splits a MoEngage campaign name like:
-        Awareness_Fastag_NA_Normal_One-time_4Jun_9Am_Full-base_Playful_Practicality
-    Into 10 structured columns — exactly matching your Sheet1 format.
-    """
     name_clean = re.sub(r'\s*@.*$', '', str(raw_name)).strip()
     parts = name_clean.split('_')
 
@@ -164,7 +129,6 @@ def parse_campaign_name(raw_name):
 
 
 def convert_date(raw_date_str, year=None):
-    """Converts '4Jun' → datetime.date(2026, 6, 4)"""
     if not raw_date_str:
         return None
     try:
@@ -175,22 +139,15 @@ def convert_date(raw_date_str, year=None):
 
 
 def process_report(raw_df):
-    """
-    Takes the raw MoEngage DataFrame and returns a clean one
-    matching your Sheet1 format exactly.
-    """
     print(f"[2/5] Processing report...")
 
-    # Filter: only Sent campaigns
     df = raw_df[raw_df['Campaign Status'] == 'Sent'].copy()
     print(f"      → {len(df)} rows after filtering to Campaign Status = 'Sent'")
 
-    # Parse campaign name into structured columns
-    parsed    = df['Campaign Name'].apply(parse_campaign_name)
+    parsed = df['Campaign Name'].apply(parse_campaign_name)
     parsed_df = pd.DataFrame(parsed.tolist())
     parsed_df['Date'] = parsed_df['Raw Date'].apply(convert_date)
 
-    # Build output in exact Sheet1 column order
     output = pd.DataFrame({
         'Campaign Status':        df['Campaign Status'].values,
         'Campaign Name':          parsed_df['Campaign Name'].values,
@@ -229,7 +186,7 @@ def process_report(raw_df):
 def save_to_excel(df):
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     today = datetime.now().strftime("%Y-%m-%d")
-    path  = os.path.join(OUTPUT_FOLDER, f"PN_Report_{today}.xlsx")
+    path = os.path.join(OUTPUT_FOLDER, f"PN_Report_{today}.xlsx")
 
     print(f"[3/5] Saving Excel → {path}")
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
@@ -253,22 +210,21 @@ def append_to_google_sheet(df):
         from google.oauth2.service_account import Credentials
 
         print(f"[4/5] Appending to Google Sheet...")
-        import json
-creds_dict = json.loads(os.environ.get("GOOGLE_CREDS_JSON"))
-creds = Credentials.from_service_account_info(
-    creds_dict,
-    scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
+
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+
         gc = gspread.authorize(creds)
         ws = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
 
-        # Write headers if sheet is empty (first time)
         if not ws.get_all_values():
             ws.append_row(list(df.columns))
             print("      → Headers written (first time setup)")
 
-        # Append rows
-        df_copy        = df.copy()
+        df_copy = df.copy()
         df_copy['Date'] = df_copy['Date'].astype(str)
         rows = df_copy.fillna('').values.tolist()
         ws.append_rows(rows, value_input_option='USER_ENTERED')
@@ -289,8 +245,8 @@ def send_email(df, excel_path):
         print(f"[5/5] Sending email to {EMAIL_RECIPIENT}...")
         today = datetime.now().strftime("%d %b %Y")
 
-        total_campaigns  = df['Campaign Name'].nunique()
-        total_variations = len(df)
+        total_campaigns   = df['Campaign Name'].nunique()
+        total_variations  = len(df)
         total_impressions = df['All Platform Impressions'].sum()
         total_clicks      = df['All Platform Clicks'].sum()
         avg_ctr           = df['All Platform CTR'].mean()
@@ -342,7 +298,7 @@ def send_email(df, excel_path):
 
 
 # ─────────────────────────────────────────────
-# MAIN — runs everything in order
+# MAIN
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -351,10 +307,10 @@ if __name__ == "__main__":
     print(f"Running at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    raw_df     = download_moengage_report()   # Step 1: Pull from MoEngage API
-    clean_df   = process_report(raw_df)       # Step 2: Process (replaces macro)
-    excel_path = save_to_excel(clean_df)      # Step 3: Save Excel
-    append_to_google_sheet(clean_df)          # Step 4: Push to Google Sheet
-    send_email(clean_df, excel_path)          # Step 5: Email summary
+    raw_df     = download_moengage_report()
+    clean_df   = process_report(raw_df)
+    excel_path = save_to_excel(clean_df)
+    append_to_google_sheet(clean_df)
+    send_email(clean_df, excel_path)
 
     print("\n✅ All done!")
