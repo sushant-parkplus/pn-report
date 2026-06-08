@@ -44,7 +44,7 @@ EMAIL_SENDER     = os.environ.get("EMAIL_SENDER")
 EMAIL_PASSWORD   = os.environ.get("EMAIL_PASSWORD")
 EMAIL_RECIPIENT  = os.environ.get("EMAIL_RECIPIENT")
 GOOGLE_SHEET_ID  = os.environ.get("GOOGLE_SHEET_ID")
-GOOGLE_CREDS_FILE = "google_creds.json"4
+GOOGLE_CREDS_FILE = "google_creds.json"
 
 # --- Settings ---
 OUTPUT_FOLDER = "./output"    # Where Excel files are saved locally
