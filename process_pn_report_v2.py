@@ -242,6 +242,10 @@ def append_to_google_sheet(df):
 
 def send_email(df, excel_path):
     try:
+        import sendgrid
+        from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+        import base64
+
         print(f"[5/5] Sending email to {EMAIL_RECIPIENT}...")
         today = datetime.now().strftime("%d %b %Y")
 
@@ -274,24 +278,28 @@ def send_email(df, excel_path):
         </body></html>
         """
 
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%"
-        msg['From']    = EMAIL_SENDER
-        msg['To']      = EMAIL_RECIPIENT
-        msg.attach(MIMEText(html, 'html'))
+        # Build email via SendGrid
+        message = Mail(
+            from_email=EMAIL_SENDER,
+            to_emails=EMAIL_RECIPIENT,
+            subject=f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
+            html_content=html
+        )
 
+        # Attach Excel file
         with open(excel_path, 'rb') as f:
-            part = MIMEBase('application', 'octet-stream')
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(excel_path)}"')
-            msg.attach(part)
+            encoded = base64.b64encode(f.read()).decode()
+        attachment = Attachment(
+            FileContent(encoded),
+            FileName(os.path.basename(excel_path)),
+            FileType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            Disposition('attachment')
+        )
+        message.attachment = attachment
 
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
-
-        print(f"      → Email sent!")
+        sg = sendgrid.SendGridAPIClient(api_key=os.environ.get("SENDGRID_API_KEY"))
+        response = sg.send(message)
+        print(f"      → Email sent! Status: {response.status_code}")
 
     except Exception as e:
         print(f"      [ERROR] Email failed: {e}")
@@ -307,7 +315,7 @@ if __name__ == "__main__":
     print(f"Running at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    raw_df = pd.read_excel("test_report.xls", engine="openpyxl", sheet_name="sheet1")
+    raw_df     = pd.read_excel("test_report.xls", engine="openpyxl", sheet_name="sheet1")
     clean_df   = process_report(raw_df)
     excel_path = save_to_excel(clean_df)
     append_to_google_sheet(clean_df)
