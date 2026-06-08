@@ -253,10 +253,12 @@ def append_to_google_sheet(df):
         from google.oauth2.service_account import Credentials
 
         print(f"[4/5] Appending to Google Sheet...")
-        creds = Credentials.from_service_account_file(
-            GOOGLE_CREDS_FILE,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
+        import json
+creds_dict = json.loads(os.environ.get("GOOGLE_CREDS_JSON"))
+creds = Credentials.from_service_account_info(
+    creds_dict,
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
         gc = gspread.authorize(creds)
         ws = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
 
