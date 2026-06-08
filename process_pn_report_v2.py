@@ -307,7 +307,7 @@ if __name__ == "__main__":
     print(f"Running at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    raw_df     = download_moengage_report()
+    raw_df = pd.read_excel("test_report.xls", engine="openpyxl", sheet_name="sheet1")
     clean_df   = process_report(raw_df)
     excel_path = save_to_excel(clean_df)
     append_to_google_sheet(clean_df)
