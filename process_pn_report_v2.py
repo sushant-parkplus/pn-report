@@ -110,11 +110,14 @@ def download_moengage_report(date=None):
             target_file = file_list[0]
 
         print(f"      → Reading: {target_file}")
-        with z.open(target_file) as excel_file:
-            try:
-                df = pd.read_excel(excel_file, engine="openpyxl", sheet_name="sheet1")
-            except Exception:
-                df = pd.read_excel(excel_file, engine="openpyxl")
+        with z.open(target_file) as data_file:
+            if target_file.endswith('.csv'):
+                df = pd.read_csv(data_file)
+            else:
+                try:
+                    df = pd.read_excel(data_file, engine="openpyxl", sheet_name="sheet1")
+                except Exception:
+                    df = pd.read_excel(data_file, engine="openpyxl")
 
     print(f"      → {len(df)} rows loaded from MoEngage")
     return df
