@@ -53,26 +53,42 @@ def generate_signature(workspace_id, filename, secret_key):
 
 
 def download_moengage_report(date=None):
+    """
+    Downloads daily campaign report using Campaign Report API.
+    Uses Basic Auth and the report name configured in MoEngage.
+    """
     if date is None:
         report_date = datetime.now() - timedelta(days=1)
     else:
         report_date = date
 
-    filename = report_date.strftime("%Y%m%d") + ".zip"
-    date_str = report_date.strftime("%Y-%m-%d")
+    import base64
 
-    print(f"[1/5] Downloading MoEngage report for {date_str}...")
+    # Build filename: ReportName_YYYYMMDD.zip
+    report_name = "Daily-PN-Report"
+    date_str    = report_date.strftime("%Y%m%d")
+    filename    = f"{report_name}_{date_str}.zip"
 
-    signature = generate_signature(WORKSPACE_ID, filename, CAMPAIGN_API_KEY)
-    url = f"{MOENGAGE_API_BASE}/dailyCampaignReportDump/{WORKSPACE_ID}/{filename}?Signature={signature}"
+    print(f"[1/5] Downloading MoEngage report: {filename}")
 
-    response = requests.get(url, timeout=60)
+    # Basic Auth: username=WORKSPACE_ID, password=CAMPAIGN_API_KEY
+    credentials = base64.b64encode(
+        f"{WORKSPACE_ID}:{CAMPAIGN_API_KEY}".encode()
+    ).decode()
 
-    print(f"      → Downloaded {len(response.content) / 1024:.1f} KB")
+    url = f"{MOENGAGE_API_BASE}/campaign_reports/rest_api/{WORKSPACE_ID}/{filename}"
+
+    response = requests.get(
+        url,
+        headers={"Authorization": f"Basic {credentials}"},
+        timeout=60
+    )
+
     print(f"      → Status: {response.status_code}")
-    print(f"      → Response preview: {response.text[:300]}")
+    print(f"      → Downloaded {len(response.content) / 1024:.1f} KB")
 
     if response.status_code != 200:
+        print(f"      → Response: {response.text[:300]}")
         raise Exception(f"MoEngage API failed: {response.text}")
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as z:
