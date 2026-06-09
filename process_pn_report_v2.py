@@ -160,6 +160,7 @@ def convert_date(raw_date_str, year=None):
 
 def process_report(raw_df):
     print(f"[2/5] Processing report...")
+    print(f"      → Columns: {list(raw_df.columns)}")
 
     df = raw_df[raw_df['Campaign Status'] == 'Sent'].copy()
     print(f"      → {len(df)} rows after filtering to Campaign Status = 'Sent'")
