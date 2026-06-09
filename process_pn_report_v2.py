@@ -160,15 +160,23 @@ def convert_date(raw_date_str, year=None):
 
 def process_report(raw_df):
     print(f"[2/5] Processing report...")
-    print(f"      → Columns: {list(raw_df.columns)}")
 
+    # Filter: only Sent campaigns
     df = raw_df[raw_df['Campaign Status'] == 'Sent'].copy()
     print(f"      → {len(df)} rows after filtering to Campaign Status = 'Sent'")
 
+    # Parse campaign name into structured columns
     parsed = df['Campaign Name'].apply(parse_campaign_name)
     parsed_df = pd.DataFrame(parsed.tolist())
     parsed_df['Date'] = parsed_df['Raw Date'].apply(convert_date)
 
+    # Safely get column — returns None if column doesn't exist
+    def safe_col(col_name):
+        if col_name in df.columns:
+            return df[col_name].values
+        return [None] * len(df)
+
+    # Build output matching Sheet1 format
     output = pd.DataFrame({
         'Campaign Status':        df['Campaign Status'].values,
         'Campaign Name':          parsed_df['Campaign Name'].values,
@@ -181,19 +189,19 @@ def process_report(raw_df):
         'Audience':               parsed_df['Audience'].values,
         'Tone':                   parsed_df['Tone'].values,
         'Emotion':                parsed_df['Emotion'].values,
-        'Campaign Delivery Type': df['Campaign Delivery Type'].values,
-        'Variation':              df['Variation'].values,
-        'Android Message Title (Android, Web), Title (iOS)':  df['Android Message Title (Android, Web), Title (iOS)'].values,
-        'Android Message (Android, Web), Subtitle (iOS)':     df['Android Message (Android, Web), Subtitle (iOS)'].values,
-        'All Platform Impressions': df['All Platform Impressions'].values,
-        'All Platform Clicks':      df['All Platform Clicks'].values,
-        'All Platform CTR':         df['All Platform CTR'].values,
-        'Android Impressions':      df['Android Impressions'].values,
-        'Android Clicks':           df['Android Clicks'].values,
-        'Android CTR':              df['Android CTR'].values,
-        'Ios Impressions':          df['Ios Impressions'].values,
-        'Ios Clicks':               df['Ios Clicks'].values,
-        'Ios CTR':                  df['Ios CTR'].values,
+        'Campaign Delivery Type': safe_col('Campaign Delivery Type'),
+        'Variation':              safe_col('Campaign Version Name'),
+        'Android Message Title':  safe_col('Android Message Title (Android, Web), Title (iOS)'),
+        'Android Message':        safe_col('Android Message (Android, Web), Subtitle (iOS)'),
+        'All Platform Impressions': safe_col('All Platform Impressions'),
+        'All Platform Clicks':      safe_col('All Platform Clicks'),
+        'All Platform CTR':         safe_col('All Platform CTR'),
+        'Android Impressions':      safe_col('Android Impressions'),
+        'Android Clicks':           safe_col('Android Clicks'),
+        'Android CTR':              safe_col('Android CTR'),
+        'Ios Impressions':          safe_col('Ios Impressions'),
+        'Ios Clicks':               safe_col('Ios Clicks'),
+        'Ios CTR':                  safe_col('Ios CTR'),
     })
 
     print(f"      → Done. {len(output)} rows, {len(output.columns)} columns")
