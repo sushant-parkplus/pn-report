@@ -55,10 +55,10 @@ def generate_signature(workspace_id, filename, secret_key):
 def download_moengage_report(date=None):
     """
     Downloads daily campaign report using Campaign Report API.
-    Uses Basic Auth and the report name configured in MoEngage.
+    Uses Basic Auth + Signature header.
     """
     if date is None:
-        report_date = datetime.now() - timedelta(days=1)
+        report_date = datetime.now()   # today
     else:
         report_date = date
 
@@ -76,11 +76,17 @@ def download_moengage_report(date=None):
         f"{WORKSPACE_ID}:{CAMPAIGN_API_KEY}".encode()
     ).decode()
 
+    # Signature: SHA256(WORKSPACE_ID + "|" + FILENAME + "|" + CAMPAIGN_API_KEY)
+    signature = generate_signature(WORKSPACE_ID, filename, CAMPAIGN_API_KEY)
+
     url = f"{MOENGAGE_API_BASE}/campaign_reports/rest_api/{WORKSPACE_ID}/{filename}"
 
     response = requests.get(
         url,
-        headers={"Authorization": f"Basic {credentials}"},
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Signature": signature
+        },
         timeout=60
     )
 
