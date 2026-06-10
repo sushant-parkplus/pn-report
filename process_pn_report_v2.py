@@ -58,7 +58,7 @@ def download_moengage_report(date=None):
     Uses Basic Auth + Signature header.
     """
     if date is None:
-        report_date = datetime.now() - timedelta(days=1)   # yesterday
+        report_date = datetime.now()   # today
     else:
         report_date = date
 
