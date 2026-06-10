@@ -403,9 +403,13 @@ def send_email(df, excel_path):
         with open(excel_path, 'rb') as f:
             encoded = base64.b64encode(f.read()).decode()
 
+        # Support multiple recipients separated by comma
+        from sendgrid.helpers.mail import To
+        recipients = [To(r.strip()) for r in EMAIL_RECIPIENT.split(',')]
+
         message = Mail(
             from_email=EMAIL_SENDER,
-            to_emails=EMAIL_RECIPIENT,
+            to_emails=recipients,
             subject=f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
             html_content=html
         )
