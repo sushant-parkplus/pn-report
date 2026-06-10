@@ -271,46 +271,135 @@ def append_to_google_sheet(df):
 
 def send_email(df, excel_path):
     try:
+        import sendgrid
+        from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
         import base64
+        import gspread
+        from google.oauth2.service_account import Credentials
+        import json
 
         print(f"[5/5] Sending email to {EMAIL_RECIPIENT}...")
         today = datetime.now().strftime("%d %b %Y")
 
+        # ── Summary metrics ──────────────────────────────
         total_campaigns   = df['Campaign Name'].nunique()
-        total_variations  = len(df)
-        total_impressions = df['All Platform Impressions'].sum()
-        total_clicks      = df['All Platform Clicks'].sum()
+        total_impressions = int(df['All Platform Impressions'].sum())
+        total_clicks      = int(df['All Platform Clicks'].sum())
         avg_ctr           = df['All Platform CTR'].mean()
 
-        top5 = df.nlargest(5, 'All Platform CTR')[
-            ['Category', 'Date', 'Time', 'Audience',
-             'All Platform Impressions', 'All Platform Clicks', 'All Platform CTR']
-        ].to_html(index=False, border=1)
+        # ── Campaign breakdown by Type → Category ────────
+        # Aggregate to campaign level (combine variations)
+        camp_df = df.groupby(['Campaign Name', 'Category', 'Date', 'Time', 'Audience']).agg(
+            Type=('Campaign Status', 'first'),
+            Impressions=('All Platform Impressions', 'sum'),
+            Clicks=('All Platform Clicks', 'sum'),
+        ).reset_index()
+        camp_df['CTR'] = (camp_df['Clicks'] / camp_df['Impressions'] * 100).round(2)
 
+        # Build Type → Category table
+        type_col = 'Frequency'  # use Frequency as Type (One-time, Periodic etc)
+        # Actually use Campaign Name part[0] as type — already in 'Campaign Name' parsed col
+        # Group by Category for the table
+        cat_rows = ""
+        for _, row in camp_df.sort_values('CTR', ascending=False).iterrows():
+            ctr_color = "#27ae60" if row['CTR'] > 1 else "#e67e22" if row['CTR'] > 0.3 else "#e74c3c"
+            cat_rows += f"""
+            <tr>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Date']}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0"><b>{row['Campaign Name']}</b></td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Category']}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Time']}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Audience']}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Impressions']:,}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Clicks']:,}</td>
+                <td style="padding:8px;border-bottom:1px solid #f0f0f0;color:{ctr_color}"><b>{row['CTR']:.2f}%</b></td>
+            </tr>"""
+
+        # ── 7-day CTR trend from Google Sheet ────────────
+        trend_html = ""
+        try:
+            creds_dict = json.loads(GOOGLE_CREDS_JSON)
+            creds = Credentials.from_service_account_info(
+                creds_dict,
+                scopes=["https://www.googleapis.com/auth/spreadsheets"]
+            )
+            gc = gspread.authorize(creds)
+            ws = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
+            all_data = ws.get_all_records()
+
+            if all_data:
+                hist_df = pd.DataFrame(all_data)
+                hist_df['All Platform CTR'] = pd.to_numeric(hist_df['All Platform CTR'], errors='coerce')
+                hist_df['Date'] = hist_df['Date'].astype(str)
+
+                # Get last 7 unique dates
+                dates = sorted(hist_df['Date'].unique())[-7:]
+
+                # CTR trend by Category per date
+                trend = hist_df[hist_df['Date'].isin(dates)].groupby(['Date', 'Category'])['All Platform CTR'].mean().reset_index()
+
+                # Build trend table
+                categories = trend['Category'].unique()
+                trend_rows = ""
+                for cat in categories:
+                    cat_data = trend[trend['Category'] == cat].set_index('Date')['All Platform CTR']
+                    cells = ""
+                    for d in dates:
+                        val = cat_data.get(d, None)
+                        if val is not None:
+                            color = "#27ae60" if val > 1 else "#e67e22" if val > 0.3 else "#e74c3c"
+                            cells += f'<td style="padding:6px;text-align:center;color:{color}"><b>{val:.2f}%</b></td>'
+                        else:
+                            cells += '<td style="padding:6px;text-align:center;color:#ccc">—</td>'
+                    trend_rows += f'<tr><td style="padding:6px;font-weight:bold">{cat}</td>{cells}</tr>'
+
+                date_headers = "".join([f'<th style="padding:6px;background:#1a1a2e;color:white">{d}</th>' for d in dates])
+                trend_html = f"""
+                <h3>📈 7-Day CTR Trend by Category</h3>
+                <table style="border-collapse:collapse;font-size:13px;width:100%">
+                    <tr>
+                        <th style="padding:6px;background:#1a1a2e;color:white;text-align:left">Category</th>
+                        {date_headers}
+                    </tr>
+                    {trend_rows}
+                </table>"""
+        except Exception as e:
+            trend_html = f"<p style='color:#999;font-size:12px'>Trend data unavailable: {e}</p>"
+
+        # ── Build full HTML ───────────────────────────────
         html = f"""
-        <html><body style="font-family:Arial,sans-serif;">
+        <html><body style="font-family:Arial,sans-serif;max-width:900px">
         <h2>📱 Daily Push Notification Report — {today}</h2>
-        <table cellpadding="8" style="border-collapse:collapse;">
+
+        <table cellpadding="8" style="border-collapse:collapse;margin-bottom:20px">
             <tr style="background:#f0f0f0"><td><b>Total Campaigns</b></td><td>{total_campaigns}</td></tr>
-            <tr><td><b>Total Variations</b></td><td>{total_variations}</td></tr>
-            <tr style="background:#f0f0f0"><td><b>Total Impressions</b></td><td>{total_impressions:,.0f}</td></tr>
-            <tr><td><b>Total Clicks</b></td><td>{total_clicks:,.0f}</td></tr>
-            <tr style="background:#f0f0f0"><td><b>Average CTR</b></td><td>{avg_ctr:.2f}%</td></tr>
+            <tr><td><b>Total Impressions</b></td><td>{total_impressions:,}</td></tr>
+            <tr style="background:#f0f0f0"><td><b>Total Clicks</b></td><td>{total_clicks:,}</td></tr>
+            <tr><td><b>Average CTR</b></td><td>{avg_ctr:.2f}%</td></tr>
         </table>
-        <br>
-        <h3>🏆 Top 5 Campaigns by CTR</h3>
-        {top5}
-        <br>
-        <p>Full report is attached as Excel.</p>
+
+        <h3>📊 Campaign Breakdown</h3>
+        <table style="border-collapse:collapse;font-size:13px;width:100%">
+            <tr style="background:#1a1a2e;color:white">
+                <th style="padding:8px;text-align:left">Date</th>
+                <th style="padding:8px;text-align:left">Type</th>
+                <th style="padding:8px;text-align:left">Category</th>
+                <th style="padding:8px;text-align:left">Time</th>
+                <th style="padding:8px;text-align:left">Audience</th>
+                <th style="padding:8px;text-align:right">Impressions</th>
+                <th style="padding:8px;text-align:right">Clicks</th>
+                <th style="padding:8px;text-align:right">CTR</th>
+            </tr>
+            {cat_rows}
+        </table>
+
+        {trend_html}
+
+        <br><p style="color:#999;font-size:12px">Full report attached as Excel.</p>
         </body></html>
         """
 
-        import sendgrid
-        from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-        import base64
-
         sg_api_key = os.environ.get("SENDGRID_API_KEY")
-
         with open(excel_path, 'rb') as f:
             encoded = base64.b64encode(f.read()).decode()
 
@@ -320,7 +409,6 @@ def send_email(df, excel_path):
             subject=f"PN Report {today} — {total_campaigns} campaigns | Avg CTR {avg_ctr:.2f}%",
             html_content=html
         )
-
         attachment = Attachment(
             FileContent(encoded),
             FileName(os.path.basename(excel_path)),
@@ -328,10 +416,10 @@ def send_email(df, excel_path):
             Disposition("attachment")
         )
         message.attachment = attachment
-
         sg = sendgrid.SendGridAPIClient(api_key=sg_api_key)
         response = sg.send(message)
         print(f"      → Email sent! Status: {response.status_code}")
+
     except Exception as e:
         print(f"      [ERROR] Email failed: {e}")
 
