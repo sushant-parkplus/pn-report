@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Park+ MoEngage Daily PN Report — Full Automation Script
 =========================================================
@@ -282,39 +283,84 @@ def send_email(df, excel_path):
         today = datetime.now().strftime("%d %b %Y")
 
         # ── Summary metrics ──────────────────────────────
-        total_campaigns   = df['Campaign Name'].nunique()
+        total_campaigns   = len(df)   # total rows sent (all campaigns including variations)
         total_impressions = int(df['All Platform Impressions'].sum())
         total_clicks      = int(df['All Platform Clicks'].sum())
         avg_ctr           = df['All Platform CTR'].mean()
 
-        # ── Campaign breakdown by Type → Category ────────
+        # Campaign delivery type breakdown
+        one_time_count = len(df[df['Campaign Delivery Type'].str.lower().str.contains('one', na=False)])
+        periodic_count = len(df[df['Campaign Delivery Type'].str.lower().str.contains('periodic', na=False)])
+
+        # ── Campaign breakdown grouped by Type ────────────
         # Aggregate to campaign level (combine variations)
-        camp_df = df.groupby(['Campaign Name', 'Category', 'Date', 'Time', 'Audience']).agg(
-            Type=('Campaign Status', 'first'),
+        camp_df = df.groupby(['Campaign Name', 'Category', 'Date', 'Time', 'Audience', 'Sticky/Non-sticky']).agg(
             Impressions=('All Platform Impressions', 'sum'),
             Clicks=('All Platform Clicks', 'sum'),
         ).reset_index()
-        camp_df['CTR'] = (camp_df['Clicks'] / camp_df['Impressions'] * 100).round(2)
+        camp_df['CTR'] = (camp_df['Clicks'] / camp_df['Impressions'] * 100).round(4)
 
-        # Build Type → Category table
-        type_col = 'Frequency'  # use Frequency as Type (One-time, Periodic etc)
-        # Actually use Campaign Name part[0] as type — already in 'Campaign Name' parsed col
-        # Group by Category for the table
+        # Type order as specified
+        type_order = ['Awareness', 'Duplicate- Awareness', 'Alert', 'IP', 'Promotional']
+
+        def get_type(campaign_name):
+            n = str(campaign_name).lower()
+            if 'duplicate' in n and 'awareness' in n:
+                return 'Duplicate- Awareness'
+            elif 'awareness' in n:
+                return 'Awareness'
+            elif 'alert' in n:
+                return 'Alert'
+            elif 'ip' in n or 'in-product' in n:
+                return 'IP'
+            elif 'promotional' in n or 'promo' in n:
+                return 'Promotional'
+            else:
+                return 'Other'
+
+        camp_df['Type'] = camp_df['Campaign Name'].apply(get_type)
+
+        # Build grouped HTML table — individual rows first, summary at end of each group
         cat_rows = ""
-        for _, row in camp_df.sort_values('CTR', ascending=False).iterrows():
-            ctr_color = "#27ae60" if row['CTR'] > 1 else "#e67e22" if row['CTR'] > 0.3 else "#e74c3c"
-            cat_rows += f"""
-            <tr>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Date']}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0"><b>{row['Campaign Name']}</b></td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Category']}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Time']}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Audience']}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Impressions']:,}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0">{row['Clicks']:,}</td>
-                <td style="padding:8px;border-bottom:1px solid #f0f0f0;color:{ctr_color}"><b>{row['CTR']:.2f}%</b></td>
-            </tr>"""
+        for type_name in type_order + ['Other']:
+            type_data = camp_df[camp_df['Type'] == type_name]
+            if type_data.empty:
+                continue
 
+            # Type header row
+            num = len(type_data)
+            plural = "s" if num > 1 else ""
+            cat_rows += "<tr style='background:#2c2c2c;color:white'><td colspan='5' style='padding:10px 8px;font-size:14px'><b>" + type_name + "</b> &nbsp;(" + str(num) + " campaign" + plural + ")</td></tr>"
+
+            # Individual campaign rows
+            type_imp_total   = 0
+            type_click_total = 0
+            for _, row in type_data.sort_values('Date').iterrows():
+                ctr_color2 = "#27ae60" if row['CTR'] > 1 else "#e67e22" if row['CTR'] > 0.3 else "#e74c3c"
+                type_imp_total   += int(row['Impressions'])
+                type_click_total += int(row['Clicks'])
+                cat_rows += (
+                    "<tr>"
+                    "<td style='padding:6px 8px 6px 20px;border-bottom:1px solid #f0f0f0;color:#555'>" + str(row['Date']) + " | " + str(row['Time']) + "</td>"
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0'>" + str(row['Category']) + " | " + str(row['Audience']) + "</td>"
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:right'>" + f"{int(row['Impressions']):,}" + "</td>"
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:right'>" + f"{int(row['Clicks']):,}" + "</td>"
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:right;color:" + ctr_color2 + "'><b>" + f"{row['CTR']:.2f}%" + "</b></td>"
+                    "</tr>"
+                )
+
+            # Summary row at END of each group
+            type_ctr_total = (type_click_total / type_imp_total * 100) if type_imp_total > 0 else 0
+            ctr_color_sum  = "#27ae60" if type_ctr_total > 1 else "#e67e22" if type_ctr_total > 0.3 else "#e74c3c"
+            cat_rows += (
+                "<tr style='background:#f5f5f5;border-top:2px solid #ccc'>"
+                "<td colspan='2' style='padding:8px 8px 8px 20px;font-weight:bold;color:#333'>Total " + type_name + "</td>"
+                "<td style='padding:8px;text-align:right;font-weight:bold'>" + f"{type_imp_total:,}" + "</td>"
+                "<td style='padding:8px;text-align:right;font-weight:bold'>" + f"{type_click_total:,}" + "</td>"
+                "<td style='padding:8px;text-align:right;font-weight:bold;color:" + ctr_color_sum + "'>" + f"{type_ctr_total:.2f}%" + "</td>"
+                "</tr>"
+                "<tr><td colspan='5' style='padding:4px'></td></tr>"
+            )
         # ── 7-day CTR trend from Google Sheet ────────────
         trend_html = ""
         try:
@@ -354,50 +400,47 @@ def send_email(df, excel_path):
                     trend_rows += f'<tr><td style="padding:6px;font-weight:bold">{cat}</td>{cells}</tr>'
 
                 date_headers = "".join([f'<th style="padding:6px;background:#1a1a2e;color:white">{d}</th>' for d in dates])
-                trend_html = f"""
-                <h3>📈 7-Day CTR Trend by Category</h3>
-                <table style="border-collapse:collapse;font-size:13px;width:100%">
-                    <tr>
-                        <th style="padding:6px;background:#1a1a2e;color:white;text-align:left">Category</th>
-                        {date_headers}
-                    </tr>
-                    {trend_rows}
-                </table>"""
+                date_headers = "".join([f'<th style="padding:6px;background:#1a1a2e;color:white">{d}</th>' for d in dates])
+                trend_html = "<h3>&#128200; 7-Day CTR Trend by Category</h3><table style='border-collapse:collapse;font-size:13px;width:100%'><tr><th style='padding:6px;background:#1a1a2e;color:white;text-align:left'>Category</th>" + date_headers + "</tr>" + trend_rows + "</table>"
         except Exception as e:
             trend_html = f"<p style='color:#999;font-size:12px'>Trend data unavailable: {e}</p>"
 
-        # ── Build full HTML ───────────────────────────────
-        html = f"""
-        <html><body style="font-family:Arial,sans-serif;max-width:900px">
-        <h2>📱 Daily Push Notification Report — {today}</h2>
+        # Build full HTML
+        summary_table = (
+            "<table cellpadding='8' style='border-collapse:collapse;margin-bottom:20px'>"
+            "<tr style='background:#f0f0f0'><td><b>Total Campaigns</b></td><td>" + str(total_campaigns) + "</td></tr>"
+            "<tr><td><b>&rarr; One-time</b></td><td>" + str(one_time_count) + "</td></tr>"
+            "<tr style='background:#f0f0f0'><td><b>&rarr; Periodic</b></td><td>" + str(periodic_count) + "</td></tr>"
+            "<tr><td><b>Total Impressions</b></td><td>" + f"{total_impressions:,}" + "</td></tr>"
+            "<tr style='background:#f0f0f0'><td><b>Total Clicks</b></td><td>" + f"{total_clicks:,}" + "</td></tr>"
+            "<tr><td><b>Average CTR</b></td><td>" + f"{avg_ctr:.2f}%" + "</td></tr>"
+            "</table>"
+        )
 
-        <table cellpadding="8" style="border-collapse:collapse;margin-bottom:20px">
-            <tr style="background:#f0f0f0"><td><b>Total Campaigns</b></td><td>{total_campaigns}</td></tr>
-            <tr><td><b>Total Impressions</b></td><td>{total_impressions:,}</td></tr>
-            <tr style="background:#f0f0f0"><td><b>Total Clicks</b></td><td>{total_clicks:,}</td></tr>
-            <tr><td><b>Average CTR</b></td><td>{avg_ctr:.2f}%</td></tr>
-        </table>
+        campaign_table = (
+            "<h3>Campaign Breakdown by Type</h3>"
+            "<table style='border-collapse:collapse;font-size:13px;width:100%'>"
+            "<tr style='background:#444;color:white'>"
+            "<th style='padding:8px;text-align:left'>Date / Time</th>"
+            "<th style='padding:8px;text-align:left'>Category | Audience</th>"
+            "<th style='padding:8px;text-align:right'>Impressions</th>"
+            "<th style='padding:8px;text-align:right'>Clicks</th>"
+            "<th style='padding:8px;text-align:right'>CTR</th>"
+            "</tr>"
+            + cat_rows +
+            "</table>"
+        )
 
-        <h3>📊 Campaign Breakdown</h3>
-        <table style="border-collapse:collapse;font-size:13px;width:100%">
-            <tr style="background:#1a1a2e;color:white">
-                <th style="padding:8px;text-align:left">Date</th>
-                <th style="padding:8px;text-align:left">Type</th>
-                <th style="padding:8px;text-align:left">Category</th>
-                <th style="padding:8px;text-align:left">Time</th>
-                <th style="padding:8px;text-align:left">Audience</th>
-                <th style="padding:8px;text-align:right">Impressions</th>
-                <th style="padding:8px;text-align:right">Clicks</th>
-                <th style="padding:8px;text-align:right">CTR</th>
-            </tr>
-            {cat_rows}
-        </table>
+        html = (
+            "<html><body style='font-family:Arial,sans-serif;max-width:900px'>"
+            "<h2>Daily Push Notification Report - " + today + "</h2>"
+            + summary_table
+            + campaign_table
+            + trend_html
+            + "<br><p style='color:#999;font-size:12px'>Full report attached as Excel.</p>"
+            "</body></html>"
+        )
 
-        {trend_html}
-
-        <br><p style="color:#999;font-size:12px">Full report attached as Excel.</p>
-        </body></html>
-        """
 
         sg_api_key = os.environ.get("SENDGRID_API_KEY")
         with open(excel_path, 'rb') as f:
@@ -444,4 +487,4 @@ if __name__ == "__main__":
     append_to_google_sheet(clean_df)
     send_email(clean_df, excel_path)
 
-    print("\n✅ All done!")
+    print("\n&#9989; All done!")
