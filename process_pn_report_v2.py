@@ -169,7 +169,7 @@ def process_report(raw_df):
     # Parse campaign name into structured columns
     parsed = df['Campaign Name'].apply(parse_campaign_name)
     parsed_df = pd.DataFrame(parsed.tolist())
-    parsed_df['Date'] = parsed_df['Raw Date'].apply(convert_date)
+    parsed_df['Date'] = parsed_df['Raw Date'].apply(convert_date).astype(str)
 
     # Safely get column — returns None if column doesn't exist
     def safe_col(col_name):
@@ -335,6 +335,8 @@ def send_email(df, excel_path):
             # Individual campaign rows
             type_imp_total   = 0
             type_click_total = 0
+            type_data = type_data.copy()
+            type_data['Date'] = type_data['Date'].astype(str)
             for _, row in type_data.sort_values('Date').iterrows():
                 ctr_color2 = "#27ae60" if row['CTR'] > 1 else "#e67e22" if row['CTR'] > 0.3 else "#e74c3c"
                 type_imp_total   += int(row['Impressions'])
